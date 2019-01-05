@@ -1,0 +1,309 @@
+package org.usfirst.frc.team5404.robot;
+
+import edu.wpi.first.wpilibj.Timer;
+import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
+
+public class Autonomous {
+	public static int programCounter = 0;
+	
+	public static void init() {
+		programCounter = 0;
+		
+		forwardDistanceSetpoint = 0;
+		forwardMaxSpeed = 0;
+		
+		rotationSetpoint = 0;
+		
+		Hardware.leftDriveEncoder.reset();
+		Hardware.rightDriveEncoder.reset();
+		Hardware.gyro.reset();
+	}
+	
+	public static void periodic() {
+		SmartDashboard.putNumber("Left encoder", Hardware.leftDriveEncoder.getDistance());
+		SmartDashboard.putNumber("Right encoder", Hardware.rightDriveEncoder.getDistance());
+		
+		SmartDashboard.putNumber("Speedometer", Hardware.rightDriveEncoder.getRate() / 12.0);
+		
+		SmartDashboard.putNumber("Program counter", programCounter);
+		SmartDashboard.putNumber("Gyro reading", Hardware.gyro.getAngle());
+		switch(programCounter) {
+		case 0:{
+			programCounter += accelerateToMaxSpeedInit();
+			break;
+		}
+		case 1:{
+			// 36 inches forward
+			programCounter += accelerateToMaxSpeed();
+			break;
+		}
+		case 2:{
+			programCounter += motorBrakingInit();
+			break;
+		}
+		case 3:{
+			programCounter += motorBraking();
+			break;
+		}
+		case 4: {
+			programCounter += constantSpeedMoveInit(36, 24);
+			break;
+		}
+		case 5:{
+			programCounter += constantSpeedMove();
+			break;
+		}
+		default:{
+			Drive.Driving.arcadeDrive(0, 0);
+		}
+		
+		/*
+		case 2:{
+			programCounter += fullSpeedAheadInit(48);
+			break;
+		}
+		case 3:{
+			programCounter += fullSpeedAhead();
+			break;
+		}
+		case 2:{
+			// 36 inches forward
+			programCounter += slowToStopInit();
+			break;
+		}
+		case 3:{
+			programCounter += slowToStop();
+		}*/
+		}
+		// Total: 120 inches = 10 feet forward
+	}
+	
+	// Auto drive methods - move to another file?
+	
+	private static double forwardDistanceSetpoint = 0;
+	private static double forwardMaxSpeed = 0;
+	private static double forwardSoftSpeed = 0;
+	
+	private static double rotationSetpoint = 0;
+	private static double rotationMaxSpeed = 0;
+	
+	public static int motorBrakingInit() {
+		return moveForwardInit(0, 0, false);
+	}
+	
+	public static int motorBraking() {
+		if(Hardware.rightDriveEncoder.getRate() <= 24) {
+			Drive.Driving.arcadeDrive(0, 0);
+			return 1;
+		} else {
+			Drive.Driving.arcadeDrive(-0.5, 0);
+			return 0;
+		}
+	}
+	
+	private static double pidSpeedSetpoint = 0;
+	
+	public static int constantSpeedMoveInit(double distance, double ips) {
+		pidSpeedSetpoint = ips;
+		return moveForwardInit(distance, 0, false);
+	}
+	
+	public static int constantSpeedMove() {
+		double distanceRemaining = forwardDistanceSetpoint - Hardware.rightDriveEncoder.getDistance();
+		
+		if(distanceRemaining <= 0) {
+			Drive.Driving.arcadeDrive(-0.5, 0);
+			return 1;
+		} else {
+			double power = 0.35; //Constants.forwardDriveSpeedPID.get();
+			double rotation = Constants.forwardDriveAnglePID.get();
+			Drive.Driving.arcadeDrive(power, rotation);
+			
+			return 0;
+		}
+	}
+	
+	// internal use only - ugly
+	private static int moveForwardInit(double distance, double speed, boolean resetSetpoint) {
+		
+		if(resetSetpoint) {
+			forwardDistanceSetpoint = Hardware.rightDriveEncoder.getDistance() + distance;
+		} else {
+			forwardDistanceSetpoint += distance;
+		}
+		forwardSoftSpeed = 0; // used for soft speed ramp up in accelerateToMaxSpeed()
+		forwardMaxSpeed = speed;
+		
+		Constants.forwardDriveDistancePID.reset();
+		Constants.forwardDriveDistancePID.enable();
+		Constants.forwardDriveDistancePID.setSetpoint(forwardDistanceSetpoint);
+		Constants.forwardDriveDistancePID.setOutputRange(-forwardMaxSpeed, forwardMaxSpeed);
+		
+		Constants.forwardDriveAnglePID.reset();
+		Constants.forwardDriveAnglePID.enable();
+		Constants.forwardDriveAnglePID.setSetpoint(rotationSetpoint);
+		
+		Constants.forwardDriveSpeedPID.reset();
+		Constants.forwardDriveSpeedPID.enable();
+		Constants.forwardDriveSpeedPID.setSetpoint(pidSpeedSetpoint);
+		
+		// move on in the program
+		return 1;
+	}
+	static Timer m_timer = new Timer();
+	
+	static int accelerateToMaxSpeedStage;
+	public static int accelerateToMaxSpeedInit() {
+		// magic numbers
+		m_timer.start();
+		accelerateToMaxSpeedStage = 1;
+		//return moveForwardInit(36, 1.0, true);
+		forwardDistanceSetpoint = 36;
+		
+		
+		forwardSoftSpeed = 0; // used for soft speed ramp up in accelerateToMaxSpeed()
+		forwardMaxSpeed = Constants.autoHighSpeed;
+			
+		
+		Constants.forwardDriveAnglePID.reset();
+		Constants.forwardDriveAnglePID.enable();
+		Constants.forwardDriveAnglePID.setSetpoint(rotationSetpoint);
+		
+		Constants.forwardDriveSpeedPID.reset();
+		Constants.forwardDriveSpeedPID.enable();
+		Constants.forwardDriveSpeedPID.setSetpoint(pidSpeedSetpoint);
+	}
+	
+	static boolean flagtemp = false;
+	
+	public static int accelerateToMaxSpeed() {
+		double forwardDistanceRemaining = forwardDistanceSetpoint - Hardware.rightDriveEncoder.getDistance();
+		
+		if(forwardDistanceRemaining < 0) {
+			// done
+			m_timer.stop();
+			SmartDashboard.putNumber("Max input", forwardSoftSpeed);
+			SmartDashboard.putNumber("Top speed", Hardware.rightDriveEncoder.getRate() / 12.0);
+			SmartDashboard.putNumber("Time in 3ft", m_timer.get());
+			Drive.Driving.arcadeDrive(0, 0);
+			Constants.forwardDriveAnglePID.disable();
+			Constants.forwardDriveSpeedPID.disable();
+			return 1;
+		} else {
+			forwardSoftSpeed = Math.min(forwardSoftSpeed + 0.1, forwardMaxSpeed);
+			double power = forwardSoftSpeed;
+			double rotation = Constants.forwardDriveAnglePID.get();
+			
+			if(!flagtemp && Hardware.rightDriveEncoder.getRate() / 12.0 >= 6.0) {
+				flagtemp = true;
+				SmartDashboard.putNumber("Time to reach top speed", m_timer.get());
+			}
+			
+			Drive.Driving.arcadeDrive(power, rotation);
+			return 0;
+		}
+	}
+	
+	
+	public static int fullSpeedAheadInit(double distance) {
+		return moveForwardInit(distance, forwardMaxSpeed, false);
+	}
+	
+	public static int fullSpeedAhead() {
+		double forwardDistanceRemaining = forwardDistanceSetpoint - Hardware.rightDriveEncoder.getDistance();
+		
+		if(forwardDistanceRemaining < 0) {
+			// done
+			Drive.Driving.arcadeDrive(0, 0);
+			Constants.forwardDriveAnglePID.disable();
+			return 1;
+		} else {
+			double power = forwardMaxSpeed;
+			double rotation = Constants.forwardDriveAnglePID.get();
+			
+			Drive.Driving.arcadeDrive(power, rotation);
+			return 0;
+		}
+	}
+	
+	public static int slowToStopStage;
+	public static int slowToStopInit() {
+		slowToStopStage = 1;
+		return 1;
+	}
+	
+	public static int slowToStop() {
+		int returnValue = 0;
+		switch (slowToStopStage) {
+		case 1: {
+			if (Hardware.rightDriveEncoder.getRate()<.5) {
+				slowToStopStage = 2;
+			}
+			break;
+		}
+		case 2: {
+				
+		}
+		}
+		return returnValue;
+	}
+	
+	
+//	public static int slowToStopInit() {
+//		// magic numbers
+//		return moveForwardInit(36, forwardMaxSpeed, false);
+//	}
+//	
+//	/** ------------------- TAKES 36 INCHES ------------------ **/
+//	public static int slowToStop() {
+//		double forwardError = Constants.forwardDriveDistancePID.getError();
+//		double forwardSpeed = Hardware.rightDriveEncoder.getRate();
+//		SmartDashboard.putNumber("Forward error", forwardError);
+//		
+//		if(Math.abs(forwardError) < Constants.forwardDriveDistanceThreshold
+//				&& Math.abs(forwardSpeed) < Constants.forwardDriveSpeedThreshold) {
+//			// done
+//			Drive.Driving.arcadeDrive(0, 0);
+//			Constants.forwardDriveDistancePID.disable();
+//			Constants.forwardDriveAnglePID.disable();
+//			return 1;
+//		} else {
+//			// must drive further
+//			double power = Constants.forwardDriveDistancePID.get();
+//			double rotation = Constants.forwardDriveAnglePID.get();
+//			Drive.Driving.arcadeDrive(power, rotation);
+//			return 0;
+//		}
+//	}
+	
+	public static int rotateInit(double angle, double speed) {
+		
+		// Do not reset gyro.
+		rotationSetpoint += angle;
+		rotationMaxSpeed = speed;
+		
+		Constants.rotateAnglePID.reset();
+		Constants.rotateAnglePID.enable();
+		Constants.rotateAnglePID.setSetpoint(rotationSetpoint);
+		Constants.rotateAnglePID.setOutputRange(-rotationMaxSpeed, rotationMaxSpeed);
+		
+		return 1;
+	}
+	
+	public static int rotate() {
+		double error = Constants.rotateAnglePID.getError();
+		SmartDashboard.putNumber("Rotate error", error);
+		
+		if(Math.abs(error) < Constants.rotateAngleThreshold) {
+			// done
+			Drive.Driving.arcadeDrive(0, 0);
+			Constants.rotateAnglePID.disable();
+			return 1;
+		} else {
+			// must drive further
+			double rotation = Constants.rotateAnglePID.get();
+			Drive.Driving.arcadeDrive(0, rotation);
+			return 0;
+		}
+	}
+}
